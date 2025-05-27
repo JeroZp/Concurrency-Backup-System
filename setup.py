@@ -102,7 +102,7 @@ def install_dependencies():
         dependencies = [
             "dask[complete]==2023.12.1",
             "distributed==2023.12.1", 
-            "cryptography==41.0.8",
+            "cryptography==3.0.0",
             "psutil==5.9.6"
         ]
         
