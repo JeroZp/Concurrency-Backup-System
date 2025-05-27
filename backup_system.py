@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Sistema de Backup Seguro con Dask y Algoritmos de Compresión Clásicos
 Proyecto Final - Programación de Sistemas
@@ -31,44 +32,45 @@ import base64
 
 # Interfaz gráfica
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, filedialog, messagebox
 
-# Configuración del logger
+# Configuración de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class CompressionAlgorithm:
-    """Enumeración de algoritmos de compresión soportados."""
-    ZIP = 'zip'
-    GZIP = 'gzip'
-    BZIP2 = 'bzip2'
+    """Enumeración de algoritmos de compresión soportados"""
+    ZIP = "zip"
+    GZIP = "gzip"
+    BZIP2 = "bzip2"
 
 class StorageOption:
-    """Enumeración de opciones de almacenamiento."""
-    LOCAL = 'local'
-    REMOTE = 'remote'
-    USB_FRAGMENTS = 'usb_fragments'
+    """Enumeración de opciones de almacenamiento"""
+    LOCAL = "local"
+    CLOUD = "cloud"
+    USB_FRAGMENTS = "usb_fragments"
 
 class BackupConfig:
-    """Configuración del sistema de backup."""
+    """Configuración del backup"""
     def __init__(self):
-        self.source_folder: List[str] = []
+        self.source_folders: List[str] = []
         self.compression_algorithm: str = CompressionAlgorithm.ZIP
         self.encrypt: bool = False
         self.password: Optional[str] = None
         self.storage_option: str = StorageOption.LOCAL
         self.destination_path: str = ""
-        self.fragment_size: int = 100
+        self.fragment_size_mb: int = 100
         self.backup_name: str = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 class EncryptionManager:
-    """Manejador de encriptación y desencriptación de archivos."""
-
+    """Maneja la encriptación y desencriptación de archivos"""
+    
     @staticmethod
     def generate_key_from_password(password: str, salt: bytes = None) -> Tuple[bytes, bytes]:
-        """Genera una clave de encripotación a partir de una contraseña."""
+        """Genera una clave de encriptación a partir de una contraseña"""
         if salt is None:
             salt = os.urandom(16)
+        
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -77,90 +79,103 @@ class EncryptionManager:
         )
         key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
         return key, salt
-
+    
     @staticmethod
     def encrypt_file(file_path: str, password: str) -> str:
-        """Encripta un archivo y retorna la ruta del archivo encriptado usando Fernet."""
+        """Encripta un archivo y retorna la ruta del archivo encriptado"""
         key, salt = EncryptionManager.generate_key_from_password(password)
         fernet = Fernet(key)
-
-        encrypt_path = f"{file_path}.encrypted"
-
+        
+        encrypted_path = f"{file_path}.encrypted"
+        
         with open(file_path, 'rb') as original_file:
             original_data = original_file.read()
+        
         encrypted_data = fernet.encrypt(original_data)
-
-        # Guarda el salt al inicio del archivo encriptado
+        
+        # Guardamos el salt al inicio del archivo encriptado
         with open(encrypted_path, 'wb') as encrypted_file:
             encrypted_file.write(salt)
             encrypted_file.write(encrypted_data)
-
-        return encrypt_path
-
+        
+        return encrypted_path
+    
     @staticmethod
     def decrypt_file(encrypted_path: str, password: str, output_path: str):
         """Desencripta un archivo"""
         with open(encrypted_path, 'rb') as encrypted_file:
-            salt = encrypted_file.read(16) # Los primeros 16 bytes son el salt
+            salt = encrypted_file.read(16)  # Primeros 16 bytes son el salt
             encrypted_data = encrypted_file.read()
-
+        
         key, _ = EncryptionManager.generate_key_from_password(password, salt)
         fernet = Fernet(key)
-
+        
         original_data = fernet.decrypt(encrypted_data)
-
+        
         with open(output_path, 'wb') as output_file:
             output_file.write(original_data)
 
 class CompressionManager:
-    """Maneja los algoritmos de compresión."""
-
+    """Maneja los algoritmos de compresión"""
+    
     @staticmethod
     @delayed
-    def compress_file_zip(source_folder: List[str], output_path: str) -> str:
-        """Comprime múltiples carpetas usando ZIP con paralelismo Dask."""
+    def compress_file_zip(file_path: str, zip_path: str, arcname: str):
+        """Comprime un archivo individual usando ZIP (con Dask delayed)"""
+        try:
+            with zipfile.ZipFile(zip_path, 'a', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+                zf.write(file_path, arcname)
+            return f"Compressed: {arcname}"
+        except Exception as e:
+            logger.error(f"Error compressing {file_path}: {e}")
+            return f"Error: {file_path}"
+    
+    @staticmethod
+    def compress_folder_zip(source_folders: List[str], output_path: str) -> str:
+        """Comprime múltiples carpetas usando ZIP con paralelismo Dask"""
         zip_path = f"{output_path}.zip"
-
-        # Crea el archivo ZIP vacío
-        with zipfile.ZipFile(output_path, 'w') as zf:
+        
+        # Crear el archivo ZIP vacío
+        with zipfile.ZipFile(zip_path, 'w') as zf:
             pass
-
-        # Recopila todos los archivos y carpetas usando Dask Bag
+        
+        # Recopilar todos los archivos usando Dask Bag
         all_files = []
-        for folder in source_folder:
+        for folder in source_folders:
             folder_path = Path(folder)
             for file_path in folder_path.rglob('*'):
                 if file_path.is_file():
                     arcname = str(file_path.relative_to(folder_path.parent))
-
-        # Procesa archivos en paralelo usando Dask
+                    all_files.append((str(file_path), arcname))
+        
+        # Procesar archivos en paralelo usando Dask
         file_bag = db.from_sequence(all_files)
-
+        
         def add_to_zip(file_info):
             file_path, arcname = file_info
             try:
-                # Usa un lock para escribir en el archivo ZIP de forma thread-safe
+                # Usamos un lock para escribir en el ZIP de forma thread-safe
                 with zipfile.ZipFile(zip_path, 'a', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
                     zf.write(file_path, arcname)
-                return f"Añadido: {arcname}"
+                return f"Added: {arcname}"
             except Exception as e:
-                return f"Error al añadir: {arcname} - {e}"
-
+                return f"Error: {file_path} - {e}"
+        
         # Procesar en paralelo
         results = file_bag.map(add_to_zip).compute()
-
-        logger.info(f"Compresión ZIP completada. Resultados: {len(results)} archivos procesados.")
+        
+        logger.info(f"ZIP compression completed. Results: {len(results)} files processed")
         return zip_path
-
+    
     @staticmethod
-    def compress_folder_gzip(source_folder: List[str], output_path: str) -> str:
-        """Comprime múltiples carpetas usando GZIP (primero TAR, luego GZIP)."""
+    def compress_folder_gzip(source_folders: List[str], output_path: str) -> str:
+        """Comprime carpetas usando GZIP (primero TAR, luego GZIP)"""
         import tarfile
-
+        
         tar_path = f"{output_path}.tar"
         gzip_path = f"{output_path}.tar.gz"
-
-        # Crea archivo TAR usando Dask para paralelismo
+        
+        # Crear archivo TAR usando Dask para paralelización
         with tarfile.open(tar_path, 'w') as tar:
             # Usar Dask para procesar carpetas en paralelo
             @delayed
@@ -169,111 +184,111 @@ class CompressionManager:
             
             folder_tasks = [add_folder_to_tar(folder) for folder in source_folders]
             processed_folders = dask.compute(*folder_tasks)
-
+            
             for folder in processed_folders:
                 folder_name = os.path.basename(folder)
                 tar.add(folder, arcname=folder_name)
-
-        # Comprime con GZIP
+        
+        # Comprimir con GZIP
         with open(tar_path, 'rb') as f_in:
             with gzip.open(gzip_path, 'wb', compresslevel=6) as f_out:
                 shutil.copyfileobj(f_in, f_out)
-
-        # Elimina el archivo TAR temporal
+        
+        # Eliminar archivo TAR temporal
         os.remove(tar_path)
-
-        logger.info(f"Compresión GZIP completada. Archivo: {gzip_path}")
+        
+        logger.info(f"GZIP compression completed: {gzip_path}")
         return gzip_path
-
+    
     @staticmethod
-    def compress_folder_bzip2(source_folder: List[str], output_path: str) -> str:
-        """Comprime múltiples carpetas usando BZIP2 (primero TAR, luego BZIP2)."""
+    def compress_folder_bzip2(source_folders: List[str], output_path: str) -> str:
+        """Comprime carpetas usando BZIP2"""
         import tarfile
-
+        
         tar_path = f"{output_path}.tar"
-        bzip2_path = f"{output_path}.tar.bz2"
-
-        # Crea archivo TAR usando Dask para paralelismo
+        bz2_path = f"{output_path}.tar.bz2"
+        
+        # Crear archivo TAR
         with tarfile.open(tar_path, 'w') as tar:
-            for folder in source_folder:
+            for folder in source_folders:
                 folder_name = os.path.basename(folder)
                 tar.add(folder, arcname=folder_name)
         
-        # Comprime con BZIP2 usando paralelismo
+        # Comprimir con BZIP2 usando paralelismo
         @delayed
         def compress_chunk(chunk_data):
             return bz2.compress(chunk_data, compresslevel=6)
-
-        # Lee el archivo TAR y lo divide en fragmentos
-        chunk_size = 1024 * 1024  # 1 MB
+        
+        # Leer y comprimir por chunks
+        chunk_size = 1024 * 1024  # 1MB chunks
         with open(tar_path, 'rb') as f_in:
-            with open(bzip2_path, 'wb') as f_out:
+            with open(bz2_path, 'wb') as f_out:
                 chunks = []
                 while True:
                     chunk = f_in.read(chunk_size)
                     if not chunk:
                         break
                     chunks.append(chunk)
-
-                # Procesa los fragmentos en paralelo
+                
+                # Comprimir chunks en paralelo (simulado - BZIP2 no es fácilmente paralelizable)
                 compressed_data = bz2.compress(b''.join(chunks), compresslevel=6)
                 f_out.write(compressed_data)
-
-        # Elimina el archivo TAR temporal
+        
+        # Eliminar archivo TAR temporal
         os.remove(tar_path)
-
-        logger.info(f"Compresión BZIP2 completada. Archivo: {bzip2_path}")
-        return bzip2_path
+        
+        logger.info(f"BZIP2 compression completed: {bz2_path}")
+        return bz2_path
 
 class StorageManager:
-    """Maneja las opciones de almacenamiento."""
-
+    """Maneja las opciones de almacenamiento"""
+    
     @staticmethod
     @delayed
-    def copy_to_external_drive(source: str, destination_path: str):
-        """Copia el archivo a un disco externo."""
+    def copy_to_external_drive(source_path: str, destination_path: str):
+        """Copia archivo a disco externo usando Dask delayed"""
         try:
-            shutil.copy2(source, destination_path)
-            return f"Archivo copiado a {destination_path}"
+            shutil.copy2(source_path, destination_path)
+            return f"Copied to: {destination_path}"
         except Exception as e:
-            logger.error(f"Error al copiar a {destination_path}: {e}")
-            return f"Error al copiar a {destination}: {e}"
-
+            logger.error(f"Error copying to external drive: {e}")
+            return f"Error: {e}"
+    
     @staticmethod
     def fragment_file(file_path: str, fragment_size_mb: int, output_dir: str) -> List[str]:
-        """Fragmenta un archivo en partes usando Dask"""
-        fragment_size = fragment_size_mb * 1024 * 1024
+        """Fragmenta un archivo en múltiples partes usando Dask"""
+        fragment_size = fragment_size_mb * 1024 * 1024  # Convertir a bytes
         file_size = os.path.getsize(file_path)
         num_fragments = (file_size + fragment_size - 1) // fragment_size
-
+        
         fragment_paths = []
-
+        
         @delayed
         def create_fragment(fragment_num, start_pos, size):
             fragment_path = os.path.join(output_dir, f"{os.path.basename(file_path)}.part{fragment_num:03d}")
-
-            with open(file_path, 'rb') as f_in:
+            
+            with open(file_path, 'rb') as source:
                 source.seek(start_pos)
                 data = source.read(size)
-
+                
                 with open(fragment_path, 'wb') as fragment:
                     fragment.write(data)
-
+            
             return fragment_path
-
-        # Crea tareas de fragmentación en paralelo
+        
+        # Crear tareas de fragmentación en paralelo
         fragment_tasks = []
         for i in range(num_fragments):
             start_pos = i * fragment_size
             actual_size = min(fragment_size, file_size - start_pos)
-
+            
             task = create_fragment(i, start_pos, actual_size)
             fragment_tasks.append(task)
-
-        # Ejecuta las tareas de fragmentación
+        
+        # Ejecutar en paralelo
         fragment_paths = dask.compute(*fragment_tasks)
-
-        # Crea archivos de metadatos
+        
+        # Crear archivo de metadatos
         metadata = {
             'original_file': os.path.basename(file_path),
             'total_fragments': num_fragments,
@@ -281,39 +296,39 @@ class StorageManager:
             'original_size': file_size,
             'fragments': [os.path.basename(path) for path in fragment_paths]
         }
-
+        
         metadata_path = os.path.join(output_dir, f"{os.path.basename(file_path)}.metadata.json")
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
-
-        logger.info(f"Archivo fragmentado: {file_path} en {num_fragments} partes.")
+        
+        logger.info(f"File fragmented into {num_fragments} parts")
         return list(fragment_paths) + [metadata_path]
 
 class BackupSystem:
-    """Sistema principal de backup."""
-
+    """Sistema principal de backup"""
+    
     def __init__(self):
         self.config = BackupConfig()
         self.dask_client = None
-
+        
     def initialize_dask(self):
-        """Inicializa el cliente Dask para paralelismo."""
-        try: 
+        """Inicializa el cliente Dask para paralelismo"""
+        try:
             self.dask_client = Client(processes=False, threads_per_worker=2, n_workers=4)
-            logger.info(f"Cliente Dask inicializado: {self.dask_client}")
+            logger.info(f"Dask client initialized: {self.dask_client}")
         except Exception as e:
-            logger.warning(f"Error al inicializar Dask: {e}")
+            logger.warning(f"Could not initialize Dask client: {e}")
             self.dask_client = None
-
+    
     def create_backup(self, config: BackupConfig) -> str:
-        """Crea un backup completo segun la configuración."""
+        """Crea un backup completo según la configuración"""
         self.config = config
-
+        
         if self.dask_client is None:
             self.initialize_dask()
-
+        
         try:
-            # Paso 1: Comprime los archivos
+            # Paso 1: Comprimir archivos
             logger.info("Starting compression...")
             if config.compression_algorithm == CompressionAlgorithm.ZIP:
                 compressed_path = CompressionManager.compress_folder_zip(
@@ -361,7 +376,24 @@ class BackupSystem:
         except Exception as e:
             logger.error(f"Backup failed: {e}")
             raise e
-
+    
+    def restore_backup(self, backup_path: str, destination: str, password: str = None):
+        """Restaura un backup"""
+        try:
+            # Detectar si es un backup fragmentado
+            if os.path.isdir(backup_path):
+                # Buscar archivo de metadatos
+                metadata_files = [f for f in os.listdir(backup_path) if f.endswith('.metadata.json')]
+                if metadata_files:
+                    return self._restore_fragmented_backup(backup_path, metadata_files[0], destination, password)
+            
+            # Backup normal
+            return self._restore_normal_backup(backup_path, destination, password)
+            
+        except Exception as e:
+            logger.error(f"Restore failed: {e}")
+            raise e
+    
     def _restore_fragmented_backup(self, fragment_dir: str, metadata_file: str, destination: str, password: str = None):
         """Restaura un backup fragmentado"""
         # Leer metadatos
@@ -376,42 +408,42 @@ class BackupSystem:
                 fragment_path = os.path.join(fragment_dir, fragment_name)
                 with open(fragment_path, 'rb') as fragment:
                     output.write(fragment.read())
-
-        # Continua con restauración normal
+        
+        # Continuar con restauración normal
         return self._restore_normal_backup(reconstructed_path, destination, password)
-
+    
     def _restore_normal_backup(self, backup_path: str, destination: str, password: str = None):
         """Restaura un backup normal"""
         current_path = backup_path
-
-        # Desencripta si es necesario
+        
+        # Desencriptar si es necesario
         if backup_path.endswith('.encrypted') and password:
             decrypted_path = backup_path.replace('.encrypted', '')
             EncryptionManager.decrypt_file(backup_path, password, decrypted_path)
             current_path = decrypted_path
-
-        # Descomprime el archivo
+        
+        # Descomprimir
         if current_path.endswith('.zip'):
             with zipfile.ZipFile(current_path, 'r') as zf:
                 zf.extractall(destination)
         elif current_path.endswith('.tar.gz'):
             import tarfile
-            with tarfile.open(current_path, 'r:gz') as tar:
-                tar.extractall(destination)
+            with tarfile.open(current_path, 'r:gz') as tf:
+                tf.extractall(destination)
         elif current_path.endswith('.tar.bz2'):
             import tarfile
-            with tarfile.open(current_path, 'r:bz2') as tar:
-                tar.extractall(destination)
-
-        logger.info(f"Backup restaurado en: {destination}")
+            with tarfile.open(current_path, 'r:bz2') as tf:
+                tf.extractall(destination)
+        
+        logger.info(f"Backup restored to: {destination}")
         return destination
-
+    
     def close(self):
         """Cierra el cliente Dask"""
         if self.dask_client:
             self.dask_client.close()
 
-# Interfaz gráfica simple (IA)
+# Interfaz gráfica simple
 class BackupGUI:
     """Interfaz gráfica del sistema de backup"""
     
