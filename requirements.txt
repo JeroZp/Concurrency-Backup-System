@@ -4,8 +4,8 @@ dask[complete]==2023.12.1
 distributed==2023.12.1
 
 # Encriptación y seguridad
-cryptography==41.0.8
-pycryptodome==3.19.0
+cryptography==3.0.0
+pycryptodome==3.15.0
 
 # Interfaz gráfica
 tkinter  # Viene incluido con Python, pero lo listamos para claridad
