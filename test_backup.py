@@ -50,9 +50,9 @@ class TestBackupSystem(unittest.TestCase):
         
         # Crear archivos de diferentes tamaños
         test_files = {
-            "small.txt": b"Contenido pequeño" * 100,  # ~1.7KB
-            "medium.txt": b"Contenido mediano" * 10000,  # ~170KB
-            "large.txt": b"Contenido grande" * 100000,  # ~1.7MB
+            "small.txt": b"Contenido pequeno" * 100,  # 1.7KB
+            "medium.txt": b"Contenido mediano" * 10000,  # 170KB
+            "large.txt": b"Contenido grande" * 100000,  # 1.7MB
         }
         
         for filename, content in test_files.items():
