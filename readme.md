@@ -370,9 +370,9 @@ git push origin feature/nueva-caracteristica
 
 ## 👥 Créditos y Licencia
 
-**Desarrollado por**: [Tu Nombre]  
-**Institución**: [Tu Universidad]  
-**Curso**: Programación de Sistemas  
+**Desarrollado por**: Jerónimo Pérez Baquero  
+**Institución**: Universidad EAFIT  
+**Curso**: Sistemas Operativos  
 **Fecha**: Mayo 2025
 
 ### Tecnologías Utilizadas
