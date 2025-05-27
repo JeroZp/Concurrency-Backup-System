@@ -387,16 +387,8 @@ git push origin feature/nueva-caracteristica
 - **gzip**: Compresión GZIP (Python estándar)
 - **bz2**: Compresión BZIP2 (Python estándar)
 
-## 📞 Soporte
-
-**¿Necesitas ayuda?**
-- 📧 Email: [tu-email@universidad.edu]
-- 🐛 Issues: [GitHub Issues URL]
-- 📖 Wiki: [GitHub Wiki URL]
-- 💬 Discusiones: [GitHub Discussions URL]
-
 ---
 
 **⭐ Si este proyecto te resulta útil, ¡no olvides darle una estrella!**
 
-> **Nota**: Este proyecto fue desarrollado como proyecto final para el curso de Programación de Sistemas, demostrando la implementación de paralelismo con Dask, algoritmos de compresión clásicos, y técnicas avanzadas de desarrollo de software.
+> **Nota**: Este proyecto fue desarrollado como proyecto final para el curso de Sistemas Operativos, demostrando la implementación de paralelismo con Dask, algoritmos de compresión clásicos, y técnicas avanzadas de desarrollo de software.
