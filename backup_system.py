@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 import dask
 from dask import delayed, bag as db
 from dask.distributed import Client, as_completed
-import dask.array as da
+# import dask.array as da  # Comentado - no usado en este proyecto
 
 # Bibliotecas para encriptación
 from cryptography.fernet import Fernet
@@ -143,10 +143,21 @@ class CompressionManager:
         all_files = []
         for folder in source_folders:
             folder_path = Path(folder)
+            if not folder_path.exists():
+                logger.warning(f"Folder does not exist: {folder}")
+                continue
+                
             for file_path in folder_path.rglob('*'):
                 if file_path.is_file():
-                    arcname = str(file_path.relative_to(folder_path.parent))
-                    all_files.append((str(file_path), arcname))
+                    # Crear nombre relativo para el archivo en el ZIP
+                    try:
+                        arcname = str(file_path.relative_to(folder_path))
+                        all_files.append((str(file_path), arcname))
+                        logger.debug(f"Added file: {file_path} -> {arcname}")
+                    except ValueError as e:
+                        logger.warning(f"Could not create relative path for {file_path}: {e}")
+                        
+        logger.info(f"Total files to compress: {len(all_files)}")
         
         # Procesar archivos en paralelo usando Dask
         file_bag = db.from_sequence(all_files)
@@ -154,11 +165,24 @@ class CompressionManager:
         def add_to_zip(file_info):
             file_path, arcname = file_info
             try:
-                # Usamos un lock para escribir en el ZIP de forma thread-safe
-                with zipfile.ZipFile(zip_path, 'a', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-                    zf.write(file_path, arcname)
+                # Leer el archivo primero
+                with open(file_path, 'rb') as f:
+                    file_data = f.read()
+                
+                # Escribir al ZIP de forma thread-safe
+                import threading
+                lock = getattr(add_to_zip, '_lock', None)
+                if lock is None:
+                    add_to_zip._lock = threading.Lock()
+                    lock = add_to_zip._lock
+                
+                with lock:
+                    with zipfile.ZipFile(zip_path, 'a', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+                        zf.writestr(arcname, file_data)
+                
                 return f"Added: {arcname}"
             except Exception as e:
+                logger.error(f"Error adding {file_path} to ZIP: {e}")
                 return f"Error: {file_path} - {e}"
         
         # Procesar en paralelo
